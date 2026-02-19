@@ -22,11 +22,7 @@
   ],
   "license": "MIT",
   "activationEvents": [
-    "onStartupFinished",
-    "onCommand:terminalTabTitles.debugInfo",
-    "onCommand:terminalTabTitles.renameActiveTerminalTest",
-    "onCommand:terminalTabTitles.revertActiveTerminalToBaseline",
-    "onCommand:terminalTabTitles.getTerminalProcess"
+    "onStartupFinished"
   ],
   "main": "./extension.js",
   "contributes": {
