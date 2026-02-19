@@ -2,7 +2,7 @@
   "name": "terminal-tab-titles",
   "displayName": "Terminal Tab Titles",
   "description": "Rename integrated terminal tabs based on executed commands.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "local",
   "repository": {
     "type": "git",
@@ -25,7 +25,8 @@
     "onStartupFinished",
     "onCommand:terminalTabTitles.debugInfo",
     "onCommand:terminalTabTitles.renameActiveTerminalTest",
-    "onCommand:terminalTabTitles.revertActiveTerminalToBaseline"
+    "onCommand:terminalTabTitles.revertActiveTerminalToBaseline",
+    "onCommand:terminalTabTitles.getTerminalProcess"
   ],
   "main": "./extension.js",
   "contributes": {
@@ -56,6 +57,10 @@
       {
         "command": "terminalTabTitles.revertActiveTerminalToBaseline",
         "title": "Terminal Tab Titles: Revert Active Terminal To Baseline"
+      },
+      {
+        "command": "terminalTabTitles.getTerminalProcess",
+        "title": "Terminal Tab Titles: Get Active Terminal Process Details"
       }
     ]
   }

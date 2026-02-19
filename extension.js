@@ -15,7 +15,7 @@ const MIN_RENAME_INTERVAL_MS = 200
 const DUPLICATE_TITLE_WINDOW_MS = 3000
 const RENAME_GUARD_MS = 120
 const EDITOR_RUN_DETECT_WINDOW_MS = 3000
-const DEFAULT_BASELINE_NAME = 'bash'
+const RESET_NAME = ' '
 
 let outputChannel = null
 
@@ -116,6 +116,10 @@ function ensureTerminalState(terminal) {
     }
 
     return state
+}
+
+function getOrCreateTerminalState(terminal) {
+    return ensureTerminalState(terminal)
 }
 
 function captureBaselineIfNeeded(terminal, state, source) {
@@ -256,6 +260,18 @@ function isBaselineEligibleForEditorDetection(baselineName) {
     return baselineName.trim().toLowerCase() === 'bash'
 }
 
+function computeRevertNameForUndedicated(state) {
+    if (!state || !state.baselineCaptured || !state.baselineName) {
+        return RESET_NAME
+    }
+    const baseline = String(state.baselineName).trim()
+    if (!baseline) return RESET_NAME
+    if (isShellBaselineName(baseline)) return RESET_NAME
+    if (isTransientProcessName(baseline)) return RESET_NAME
+    const safeBaseline = sanitizeTitle(baseline)
+    return safeBaseline && safeBaseline.length > 0 ? safeBaseline : RESET_NAME
+}
+
 function activeEditorMatchesParsed(parsed) {
     if (!parsed || parsed.targetType !== 'file' || !parsed.primaryTarget) {
         return false
@@ -281,7 +297,11 @@ async function enforceDedicatedName(terminal, state, options = {}) {
 }
 
 async function applyTitleToTerminal(terminal, title, options = {}) {
-    if (!terminal || !title) return false
+    if (!terminal) return false
+
+    if (title === undefined || title === null) return false
+    const resolvedTitle = String(title)
+    if (resolvedTitle.length === 0) return false
 
     const state = ensureTerminalState(terminal)
     const now = Date.now()
@@ -295,7 +315,7 @@ async function applyTitleToTerminal(terminal, title, options = {}) {
         }
         if (
             !force &&
-            title === state.lastTitle &&
+            resolvedTitle === state.lastTitle &&
             now - state.lastRenameAt < DUPLICATE_TITLE_WINDOW_MS
         ) {
             logDebug('duplicate title suppressed')
@@ -308,14 +328,18 @@ async function applyTitleToTerminal(terminal, title, options = {}) {
         terminal.show(true)
         await vscode.commands.executeCommand(
             'workbench.action.terminal.renameWithArg',
-            { name: title }
+            { name: resolvedTitle }
         )
         state.lastRenameAt = Date.now()
-        state.lastTitle = title
+        state.lastTitle = resolvedTitle
         if (options.commandLine) {
             state.lastCommandLine = options.commandLine
         }
-        logDebug(`title applied: ${title}`)
+        logDebug(
+            `title applied: ${
+                resolvedTitle === RESET_NAME ? '<reset-space>' : resolvedTitle
+            }`
+        )
         return true
     } catch (error) {
         logInfo(`rename failed: ${String(error)}`)
@@ -439,6 +463,7 @@ async function handleExecutionEnd(event) {
     }
 
     const state = ensureTerminalState(event.terminal)
+    logDebug(`Terminal state: ${JSON.stringify(state)}`)
     captureBaselineIfNeeded(event.terminal, state, 'deferred')
     if (state.isDedicatedPermanent) {
         logDebug('end event: dedicated terminal enforcement')
@@ -451,25 +476,13 @@ async function handleExecutionEnd(event) {
         return
     }
 
-    if (
-        !state.baselineCaptured ||
-        !state.baselineName ||
-        isTransientProcessName(state.baselineName)
-    ) {
-        state.baselineName = DEFAULT_BASELINE_NAME
-        state.baselineCaptured = true
-        logDebug(`baseline fallback applied: "${DEFAULT_BASELINE_NAME}"`)
-    }
-
-    const baseline = sanitizeTitle(state.baselineName)
-    if (!baseline) {
-        logDebug('end event ignored: missing baseline')
-        state.isTemporarilyRenamed = false
-        state.lastTemporaryTitle = null
-        return
-    }
-
-    const reverted = await applyTitleToTerminal(event.terminal, baseline, {
+    const revertName = computeRevertNameForUndedicated(state)
+    logDebug(
+        `reverting undedicated terminal: ${
+            revertName === RESET_NAME ? '<reset-space>' : `"${revertName}"`
+        }`
+    )
+    const reverted = await applyTitleToTerminal(event.terminal, revertName, {
         bypassRateLimit: true,
     })
     logDebug(`revert ${reverted ? 'applied' : 'skipped'}`)
@@ -526,7 +539,7 @@ function registerTestCommand(context) {
                 return
             }
 
-            const state = ensureTerminalState(terminal)
+            const state = getOrCreateTerminalState(terminal)
             captureBaselineIfNeeded(terminal, state, 'deferred')
             if (state.isDedicatedPermanent) {
                 logInfo('revert skipped: dedicated terminal')
@@ -535,29 +548,64 @@ function registerTestCommand(context) {
                 )
                 return
             }
-            const baseline = sanitizeTitle(state.baselineName)
-            if (!baseline) {
-                logInfo('revert skipped: missing baseline')
-                void vscode.window.showInformationMessage(
-                    'Terminal Tab Titles: No baseline name.'
-                )
-                return
-            }
+            const revertName = computeRevertNameForUndedicated(state)
 
-            const success = await applyTitleToTerminal(terminal, baseline, {
+            const success = await applyTitleToTerminal(terminal, revertName, {
                 bypassRateLimit: true,
             })
             if (success) {
                 state.isTemporarilyRenamed = false
                 state.lastTemporaryTitle = null
                 void vscode.window.showInformationMessage(
-                    'Terminal Tab Titles: Reverted to baseline.'
+                    revertName === RESET_NAME
+                        ? 'Terminal Tab Titles: Reverted to default (process-following).'
+                        : 'Terminal Tab Titles: Reverted to baseline.'
                 )
             }
         }
     )
 
     context.subscriptions.push(temporaryDisposable, revertDisposable)
+}
+
+async function getActiveTerminalProcessDetails() {
+    const activeTerminal = vscode.window.activeTerminal
+
+    if (activeTerminal) {
+        const state = getOrCreateTerminalState(activeTerminal)
+        captureBaselineIfNeeded(activeTerminal, state, 'deferred')
+        const pid = await activeTerminal.processId
+        const rawName = String(activeTerminal.name || '')
+        const name = rawName === RESET_NAME
+            ? '<reset-space>'
+            : rawName.length === 0
+                ? '<empty>'
+                : rawName
+        const details = {
+            name,
+            pid: pid === undefined ? null : pid,
+            extensionState: {
+                baselineName: state.baselineName,
+                baselineCaptured: state.baselineCaptured,
+                isDedicatedPermanent: state.isDedicatedPermanent,
+                isTemporarilyRenamed: state.isTemporarilyRenamed,
+                lastTitle:
+                    state.lastTitle === RESET_NAME
+                        ? '<reset-space>'
+                        : state.lastTitle || '<empty>',
+            },
+        }
+        logInfo(`active terminal details: ${JSON.stringify(details)}`)
+        vscode.window.showInformationMessage(
+            `Terminal Tab Titles: Active Terminal=${name}, PID=${
+                details.pid === null ? 'n/a' : details.pid
+            }`
+        )
+        return details
+    } else {
+        vscode.window.showInformationMessage('No active terminal found.')
+        return null
+    }
 }
 
 function activate(context) {
@@ -639,6 +687,14 @@ function activate(context) {
         )
         context.subscriptions.push(nameDisposable)
     }
+
+    const processDisposable = vscode.commands.registerCommand(
+        'terminalTabTitles.getTerminalProcess',
+        async () => {
+            await getActiveTerminalProcessDetails()
+        }
+    )
+    context.subscriptions.push(processDisposable)
 }
 
 function deactivate() {

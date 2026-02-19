@@ -39,6 +39,7 @@ Renaming uses VS Code’s `workbench.action.terminal.renameWithArg`. No OSC sequ
 - Open **Output** → select **Terminal Tab Titles** to see logs.
 - If you see `shell execution events available: no`, VS Code does not provide shell integration events in this environment; the extension will no‑op.
 - If titles revert unexpectedly, enable `terminalTabTitles.debugLogging` and verify baseline capture and dedicated detection logs.
+- If you see `No name argument provided`, update to v0.1.1+ (empty rename payloads were replaced with a single-space reset workaround for `renameWithArg` compatibility).
 
 ## Security Model (Summary)
 - **Does not execute user commands.**
